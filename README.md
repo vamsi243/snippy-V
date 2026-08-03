@@ -60,15 +60,15 @@
 
 ### Option 1: Download Standalone App (`.exe`)
 No Python or installation required.
-1. Download `Snippy.exe` from the [Releases](https://github.com/your-username/snippy/releases) page.
+1. Download `Snippy.exe` from the [Releases](https://github.com/vamsi243/snippy-V/releases) page.
 2. Double-click `Snippy.exe` to run. Snippy sits in your system tray—press **Ctrl+Shift+S** to capture!
 
 ### Option 2: Run from Source
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/your-username/snippy.git
-cd snippy
+git clone https://github.com/vamsi243/snippy-V.git
+cd snippy-V
 
 # 2. Create and activate virtual environment
 python -m venv .venv
