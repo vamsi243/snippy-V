@@ -67,3 +67,31 @@ jobs:
         with:
           name: Snippy-Windows
           path: dist/Snippy.exe
+
+  publish-release:
+    name: Publish GitHub Release
+    needs: [build-macos, build-windows]
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download macOS Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: Snippy-macOS
+
+      - name: Download Windows Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: Snippy-Windows
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            Snippy-macOS.zip
+            Snippy.exe
+          name: Release ${{ github.ref_name }}
+          draft: false
+          prerelease: false
