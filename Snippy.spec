@@ -1,19 +1,24 @@
 # -*- mode: python ; coding: utf-8 -*-
 
 import os
+import importlib.util
 
-site_packages = os.path.join(os.getcwd(), '.venv', 'Lib', 'site-packages')
-rapidocr_dir = os.path.join(site_packages, 'rapidocr')
+datas = [
+    ('assets', 'assets'),
+    ('ocr', 'ocr'),
+]
+
+# Dynamically locate rapidocr package directory if installed
+rapidocr_spec = importlib.util.find_spec('rapidocr')
+if rapidocr_spec and rapidocr_spec.submodule_search_locations:
+    rapidocr_dir = list(rapidocr_spec.submodule_search_locations)[0]
+    datas.append((rapidocr_dir, 'rapidocr'))
 
 a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[
-        ('assets', 'assets'),
-        ('ocr', 'ocr'),
-        (rapidocr_dir, 'rapidocr'),
-    ],
+    datas=datas,
     hiddenimports=[
         'rapidocr',
         'onnxruntime',
@@ -52,5 +57,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=['assets\\logo.png'],
+    icon=['assets/logo.png'],
 )
