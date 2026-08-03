@@ -1,0 +1,27 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environments
+.venv/
+env/
+venv/
+ENV/
+
+# Build artifacts
+build/
+dist/
+
+# IDE & Tool configurations
+.claude/
+.vscode/
+.idea/
+
+# Temporary outputs & logs
+*.log
+run.log
+test_output.csv
+test_output.pdf
+test_table.png
+Snippy 1.png
