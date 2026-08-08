@@ -1,12 +1,10 @@
-"""Android-style 'Circle to Search' screen-edge glow overlay.
+"""Android-style 'Circle to Search' screen-edge glow overlay.
 
 A click-through transparent overlay that blooms a colored glow on the
 screen edges with a bright highlight sweeping around the perimeter.
 """
 
 from __future__ import annotations
-
-import math
 
 from PySide6.QtCore import (
     Qt, QTimer, QRectF, QPropertyAnimation, QEasingCurve, Property,
