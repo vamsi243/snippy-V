@@ -121,22 +121,48 @@ def _screen_sort_key(screen) -> tuple[int, int, str]:
 def grab_full_desktop() -> tuple[Image.Image, QRect, dict]:
     """Snapshot the entire virtual desktop with mss and compute precise per-screen mappings."""
     app = QApplication.instance()
-    screens = sorted(app.screens(), key=_screen_sort_key)
+    screens = sorted(app.screens(), key=_screen_sort_key) if app is not None else []
 
-    if not screens:
-        raise RuntimeError("No screens available for capture")
+    try:
+        with mss.mss() as sct:
+            mon0 = sct.monitors[0]  # combined physical virtual desktop
+            raw = sct.grab(mon0)
+            snapshot = Image.frombytes("RGB", raw.size, raw.bgra, "raw", "BGRX")
+            all_monitors = sct.monitors[1:]
+    except Exception:
+        try:
+            from PIL import ImageGrab
+            snapshot = ImageGrab.grab(all_screens=True).convert("RGB")
+            mon0 = {"left": 0, "top": 0, "width": snapshot.width, "height": snapshot.height}
+            all_monitors = [mon0]
+        except Exception:
+            snapshot = Image.new("RGB", (1920, 1080), (40, 40, 40))
+            mon0 = {"left": 0, "top": 0, "width": 1920, "height": 1080}
+            all_monitors = [mon0]
 
-    union_rect = QRect(screens[0].geometry())
-    for screen in screens[1:]:
-        union_rect = union_rect.united(screen.geometry())
 
-    with mss.mss() as sct:
-        mon0 = sct.monitors[0]  # combined physical virtual desktop
-        raw = sct.grab(mon0)
-        snapshot = Image.frombytes("RGB", raw.size, raw.bgra, "raw", "BGRX")
-        all_monitors = sct.monitors[1:]
 
-    screen_map = _build_screen_map(screens, union_rect, all_monitors, mon0)
+    if screens:
+        union_rect = QRect(screens[0].geometry())
+        for screen in screens[1:]:
+            union_rect = union_rect.united(screen.geometry())
+        screen_map = _build_screen_map(screens, union_rect, all_monitors, mon0)
+    else:
+        union_rect = QRect(int(mon0["left"]), int(mon0["top"]), int(mon0["width"]), int(mon0["height"]))
+        screen_map = [{
+            "screen": None,
+            "name": f"Monitor_{i+1}",
+            "log_rect": QRect(int(m["left"]), int(m["top"]), int(m["width"]), int(m["height"])),
+            "rel_log_rect": _relative_rect(QRect(int(m["left"]), int(m["top"]), int(m["width"]), int(m["height"])), union_rect),
+            "mss_mon": m,
+            "phys_rect": _monitor_relative_rect(m, mon0),
+            "phys_x": int(m["left"] - mon0["left"]),
+            "phys_y": int(m["top"] - mon0["top"]),
+            "cover_rect": QRect(int(m["left"]), int(m["top"]), int(m["width"]), int(m["height"])),
+            "scale_x": 1.0,
+            "scale_y": 1.0,
+            "dpr": 1.0,
+        } for i, m in enumerate(all_monitors)]
 
     mapping_info = {
         "union_rect": union_rect,

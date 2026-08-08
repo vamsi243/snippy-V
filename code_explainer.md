@@ -1,99 +1,265 @@
 # Snippy Code Explainer
 
-This document explains the current Snippy codebase for maintenance and release work.
+This document explains the Snippy codebase for maintainers, release builders, and people integrating Snippy with AI agents through MCP.
 
-## Architecture
+---
 
-Snippy is a PySide6 desktop app with four user-facing surfaces:
+## High-Level Architecture
 
-- `main_window.py`: the compact app window with `+ New`, `Snip`, `Ruler`, and `Color`.
-- `capture_overlay.py`: the full-screen capture overlay shown on every monitor.
-- `action_hub.py`: the floating post-capture hub with preview, OCR status, and actions.
-- `system tray`: created in `main.py` for show/capture/ruler/color/quit commands.
+Snippy has five major surfaces:
 
-Core service modules:
+- `main.py`: application entry point, CLI flags, tray setup, hotkey wiring, and MCP startup.
+- `main_window.py`: compact desktop control window.
+- `capture_overlay.py`: multi-monitor screenshot overlay, ruler mode, color picker mode, and crop math.
+- `action_hub.py`: post-capture floating hub for copy/export/search actions.
+- `mcp_server.py`: FastMCP server exposing Snippy screen-inspection tools to AI agents.
 
-- `parser_engine.py`: runs OCR, reconstructs tables, exports CSV/PDF, opens search.
-- `config.py`: app constants, theme colors, paths, OCR backend singleton, browser helper.
-- `ocr/`: backend protocol, RapidOCR adapter, table reconstruction, optional Tesseract.
+Supporting modules:
+
+- `config.py`: theme constants, app paths, OCR backend selection, Brave browser helper.
+- `parser_engine.py`: OCR orchestration, table reconstruction, CSV/PDF export helpers.
+- `ocr/base.py`: OCR protocol and parse result structure.
+- `ocr/rapidocr_backend.py`: RapidOCR / ONNX Runtime backend.
+- `ocr/tesseract.py`: optional Tesseract backend.
+- `ocr/tables.py`: geometric table reconstruction.
+- `Snippy.spec`: PyInstaller build definition for the standalone exe.
+
+---
 
 ## Runtime Flow
 
-1. `main.py` enables Windows DPI awareness before creating `QApplication`.
-2. `MainWindow` is created and the tray menu is registered.
-3. A daemon `pynput` global hotkey listener emits a Qt signal for `Ctrl+Shift+S`.
-4. A capture request closes any active Action Hubs, flushes Qt events, plays a short glow,
-   and then starts capture.
-5. `capture_overlay.start_capture()` grabs one frozen desktop snapshot with `mss`.
-6. `CaptureSession` creates one `CaptureOverlay` per monitor.
-7. The selected overlay emits a PIL crop plus its global logical selection rectangle.
-8. `main.py` opens an `ActionHub` immediately, then OCR runs in a background thread.
-9. OCR results are delivered back to the hub through a Qt signal.
+1. `main.py` parses flags:
+   - `--mcp-stdio`
+   - `--mcp-port`
+   - `--no-mcp`
+2. If `--mcp-stdio` is present, Snippy starts only the FastMCP stdio server and exits the GUI path.
+3. Otherwise, Snippy enables Windows DPI awareness and creates the PySide6 `QApplication`.
+4. If MCP is enabled, `mcp_server.start_mcp_sse_server()` starts the SSE server in a daemon background thread.
+5. `MainWindow` is shown and the system tray menu is built.
+6. A daemon `pynput` listener watches `Ctrl+Shift+S`.
+7. Capture requests play the glow overlay, launch the capture overlay, and return a PIL crop.
+8. The Action Hub appears immediately while OCR runs in a background thread.
+9. OCR results are delivered back to the UI through Qt signals.
 
-## Multi-Monitor Design
+---
 
-The current implementation intentionally avoids one giant spanning overlay window.
-Windows mixed-DPI setups can report different coordinate systems for Qt window geometry
-and physical screen capture. A spanning window caused the second monitor to render
-stretched, offset, or partially covered.
+## MCP Startup Modes
 
-Snippy now uses one overlay window per monitor:
+### Embedded GUI SSE Mode
 
-- `grab_full_desktop()` collects Qt screens and the combined `mss` screenshot.
-- `_build_screen_map()` pairs each Qt screen with one `mss` monitor.
-- Qt screens are sorted by position so repeated captures use a stable order.
-- Each map item stores:
-  - `log_rect`: Qt logical monitor geometry
-  - `rel_log_rect`: logical geometry relative to the virtual desktop
-  - `phys_rect`: physical monitor rectangle inside the `mss` snapshot
-  - `scale_x` and `scale_y`: physical/logical scale factors
-  - `cover_rect`: the Qt window rectangle for that monitor
+Default exe launch:
 
-`CaptureSession` creates one `CaptureOverlay` for each map item. Each overlay is attached
-to its matching `QScreen` and shown fullscreen. The overlay paints only that monitor's
-portion of the frozen screenshot.
+```powershell
+V:\Snippy\dist\Snippy.exe
+```
+
+Default source launch:
+
+```powershell
+python main.py
+```
+
+Result:
+
+```text
+http://127.0.0.1:8000/sse
+```
+
+Custom port:
+
+```powershell
+V:\Snippy\dist\Snippy.exe --mcp-port 8002
+python main.py --mcp-port 8002
+```
+
+No MCP:
+
+```powershell
+V:\Snippy\dist\Snippy.exe --no-mcp
+python main.py --no-mcp
+```
+
+### Headless Stdio Mode
+
+Packaged exe:
+
+```powershell
+V:\Snippy\dist\Snippy.exe --mcp-stdio
+```
+
+Source:
+
+```powershell
+python main.py --mcp-stdio
+```
+
+This mode is used when an AI client starts Snippy as a subprocess and communicates over stdin/stdout.
+
+---
+
+## MCP Client Configuration
+
+### Codex Desktop
+
+`C:\Users\<you>\.codex\config.toml`
+
+```toml
+[mcp_servers.snippy]
+url = "http://127.0.0.1:8000/sse"
+```
+
+Restart Codex Desktop or open a new Codex task after changing this file.
+
+### Claude Desktop / JSON MCP Clients
+
+```json
+{
+  "mcpServers": {
+    "snippy": {
+      "url": "http://127.0.0.1:8000/sse"
+    }
+  }
+}
+```
+
+### Stdio JSON Config
+
+```json
+{
+  "mcpServers": {
+    "snippy": {
+      "command": "V:\\Snippy\\dist\\Snippy.exe",
+      "args": ["--mcp-stdio"]
+    }
+  }
+}
+```
+
+SSE is best when users want the desktop tray app and agent tools at the same time. Stdio is best when the agent owns the server process lifecycle.
+
+---
+
+## MCP Tool Registry
+
+`mcp_server.py` creates a `FastMCP("Snippy MCP Engine")` instance and registers:
+
+- `snippy_take_snip(region=None)`
+- `snippy_ocr_screen(region=None)`
+- `snippy_extract_table(region=None)`
+- `snippy_pick_color(x, y)`
+- `snippy_get_color_palette(region=None, max_colors=5)`
+- `snippy_measure_region(x1, y1, x2, y2)`
+- `snippy_get_monitor_layout()`
+- `snippy_start_process_session(session_name)`
+- `snippy_record_step(step_name, description, region=None)`
+- `snippy_finish_process_session()`
+
+Most tools call `capture_overlay.grab_full_desktop()` to obtain a fresh screen image and monitor mapping. Region arguments use virtual desktop logical coordinates.
+
+---
+
+## MCP Diagnostics
+
+Packaged windowed apps can hide stdout/stderr. Snippy therefore writes MCP startup diagnostics to:
+
+```text
+captures\snippy_mcp.log
+```
+
+Important implementation details:
+
+- `mcp_server._log()` writes timestamped errors and tracebacks.
+- FastMCP import or server creation failures are logged instead of silently disappearing.
+- `_ensure_stdio_handles()` assigns `os.devnull` to `sys.stdout` / `sys.stderr` when PyInstaller windowed mode sets them to `None`.
+- This fixes Uvicorn formatter startup crashes in `console=False` builds.
+
+When running from `dist\Snippy.exe`, process-recording output may be written under:
+
+```text
+dist\captures\
+```
+
+This happens because the exe working directory is commonly `dist`.
+
+---
+
+## Multi-Monitor Capture Design
+
+Snippy avoids a single giant spanning overlay because Windows mixed-DPI setups can report different coordinate systems between Qt and physical screen capture.
+
+`capture_overlay.grab_full_desktop()`:
+
+1. Gets Qt screens from `QApplication`.
+2. Captures the combined physical desktop with `mss`.
+3. Builds a screen map that pairs each Qt screen with an MSS monitor.
+4. Stores logical and physical rectangles plus per-axis scale factors.
+
+Each screen map item includes:
+
+- `log_rect`: Qt logical monitor geometry
+- `rel_log_rect`: logical geometry relative to the virtual desktop
+- `phys_rect`: physical monitor rectangle in the MSS snapshot
+- `scale_x` / `scale_y`: physical-to-logical scaling
+- `dpr`: Qt device pixel ratio
+- `cover_rect`: overlay window rectangle
+
+`CaptureSession` creates one overlay per monitor. That keeps drawing, mouse events, and cropping aligned on mixed-DPI displays.
+
+---
 
 ## Capture Math
 
-Mouse events arrive in the local coordinate space of one monitor overlay.
+Mouse events arrive in local overlay coordinates.
 
-`_local_to_virtual_point()` converts local overlay coordinates to logical virtual-desktop
-coordinates. `_logical_to_physical()` then maps that logical point into the physical
-`mss` snapshot using the screen's per-axis scale factors.
+The conversion path is:
 
-For normal snips, `_make_crop()`:
+```text
+local overlay point
+-> virtual desktop logical point
+-> physical MSS pixel point
+```
 
-1. Converts the selected local rectangle to a virtual logical rectangle.
-2. Intersects that rectangle with each screen's logical rectangle.
-3. Converts each intersection to physical pixels.
-4. Crops the shared `mss` snapshot.
-5. Returns a single PIL image plus the global logical selection rectangle.
+For a normal crop:
 
-This is why mixed-DPI monitors, stacked monitors, and monitors positioned left of the
-primary screen can work without a global scale guess.
+1. Convert the selected local rectangle to a virtual logical rectangle.
+2. Intersect it with each screen's logical rectangle.
+3. Convert each intersection to physical pixels.
+4. Crop from the shared MSS screenshot.
+5. Return a final PIL image plus the global logical selection rectangle.
 
-## Modes
+The MCP tools reuse the same screen capture and coordinate mapping logic, so agent measurements align with the desktop UI.
 
-Snippy supports three capture modes:
+---
 
-- `snip`: normal rectangular capture.
-- `ruler`: draws a measurement rectangle and leaves the overlay open.
-- `color`: shows a live color tooltip and copies the clicked pixel as `#RRGGBB`.
+## Desktop Modes
 
-Scroll capture has been removed from the active app because stitched captures reduced OCR
-quality and made capture behavior less predictable.
+Snippy has three capture modes:
+
+- `snip`: normal rectangular screen capture.
+- `ruler`: measure a screen region without closing immediately.
+- `color`: sample a pixel and copy its HEX code.
+
+The tray menu exposes:
+
+- Show Snippy
+- Capture
+- Pixel Ruler
+- Color Picker
+- MCP server status
+- Quit Snippy
+
+---
 
 ## Action Hub
 
-`ActionHub` appears beside the selected region. It owns direct references to all buttons
-to avoid Qt object lifetime surprises.
+`ActionHub` appears next to the captured region and keeps direct references to its buttons to avoid Qt lifetime issues.
 
 Header actions:
 
-- `+`: start a new normal snip.
-- `Scale`: start ruler mode.
-- `Color`: start color picker mode.
-- `X`: close the hub.
+- `+`: start another snip
+- `Scale`: start ruler mode
+- `Color`: start color mode
+- `X`: close the hub
 
 Body actions:
 
@@ -103,56 +269,169 @@ Body actions:
 - Export PDF
 - Search Text
 
-When a header action starts a new capture, the hub closes first. `main.py` also closes any
-remaining active hubs before the next screenshot, so old always-on-top windows are not
-captured into the next overlay.
+OCR runs after the hub appears so the UI feels responsive even when the OCR backend is still warming up.
 
-## OCR And Exports
+---
 
-`parser_engine.parse_image()` gets the configured backend from `config.get_backend()`,
-runs OCR, and passes recognized text lines to `ocr.tables.reconstruct_geometric()`.
+## OCR, Tables, And Exports
 
-The default backend is RapidOCR. Tesseract exists as an optional fallback when explicitly
-selected through `SNIPPY_OCR_BACKEND=tesseract`.
+`parser_engine.parse_image()` gets the selected backend from `config.get_backend()`.
+
+Default:
+
+```text
+SNIPPY_OCR_BACKEND=rapidocr
+```
+
+Optional:
+
+```text
+SNIPPY_OCR_BACKEND=tesseract
+```
 
 Exports:
 
 - `export_csv()` writes UTF-8-SIG CSV for Excel compatibility.
-- `export_pdf()` uses ReportLab to create a simple PDF with text and table output.
-- `search_brave()` opens Brave when found, otherwise falls back to the default browser.
+- `export_pdf()` uses ReportLab.
+- `search_brave()` opens Brave when found, otherwise uses the default browser.
 
-## Threading
+Table extraction uses geometric reconstruction by default.
 
-Qt UI work stays on the main thread. OCR runs in a daemon background thread after the
-Action Hub appears. `_Bridge.ocr_done` carries the OCR result and target hub back to the
-main thread for UI updates.
+---
+
+## Process Recording
+
+The MCP process recorder is managed by `_ACTIVE_SESSION` and `_SESSION_LOCK`.
+
+Flow:
+
+1. `snippy_start_process_session("name")`
+   - Creates `captures/process_<name>_<timestamp>/`
+   - Initializes `manifest.json`
+2. `snippy_record_step("Step Name", "Description", region)`
+   - Captures screen or region
+   - Saves `step_01_step_name.png`
+   - Runs OCR
+   - Updates `manifest.json`
+   - Updates `walkthrough.md`
+3. `snippy_finish_process_session()`
+   - Returns the final manifest, walkthrough path, and step list
+   - Clears active session state
+
+This feature is useful for QA walkthroughs, bug reproduction, design audits, and onboarding documentation.
+
+---
+
+## Packaging
+
+`Snippy.spec` builds a one-file Windows executable.
+
+The spec bundles:
+
+- `assets/`
+- `ocr/`
+- RapidOCR package data
+- PySide6 / Qt dependencies
+- FastMCP and MCP protocol dependencies
+- Uvicorn / Starlette / SSE dependencies
+- pywin32 runtime hooks
+- OCR, image, table, and export libraries
+
+The exe uses:
+
+```python
+console=False
+```
+
+That is why MCP diagnostics are written to `captures\snippy_mcp.log` instead of relying on a terminal.
+
+---
+
+## Build Commands
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\activate
+pip install -r requirements.txt
+python -m PyInstaller Snippy.spec --noconfirm
+```
+
+Output:
+
+```text
+dist\Snippy.exe
+```
+
+Recommended validation:
+
+```powershell
+python -m py_compile main.py mcp_server.py capture_overlay.py action_hub.py config.py main_window.py parser_engine.py
+```
+
+Start the exe and verify default SSE:
+
+```powershell
+V:\Snippy\dist\Snippy.exe
+netstat -ano | findstr :8000
+```
+
+Then use an MCP client to call:
+
+```text
+snippy_get_monitor_layout
+snippy_measure_region
+snippy_pick_color
+```
+
+---
 
 ## Release Checklist
 
-Before publishing:
+Before publishing a new exe:
 
 1. Recreate a clean virtual environment.
 2. Install `requirements.txt`.
 3. Run syntax/import checks.
-4. Test from source on one monitor.
-5. Test from source on two monitors with mixed DPI.
+4. Test desktop UI on one monitor.
+5. Test desktop UI on two monitors, especially mixed DPI.
 6. Test `Snip`, `Ruler`, `Color`, copy text, copy image, CSV export, PDF export, and search.
-7. Build with `Snippy.spec`.
-8. Test the built `dist\Snippy.exe` on a clean Windows machine.
+7. Test SSE MCP from the exe on the default port.
+8. Test SSE MCP from the exe on a custom port.
+9. Test stdio MCP from the exe.
+10. Confirm `captures\snippy_mcp.log` is empty or contains only expected startup entries.
+11. Build with `Snippy.spec`.
+12. Test `dist\Snippy.exe` on a clean Windows machine.
 
-Useful local checks:
+---
 
-```powershell
-python -m compileall -q .
-python -c "import main, main_window, capture_overlay, action_hub, parser_engine; print('imports ok')"
-```
+## Size And Efficiency Notes
 
-## Packaging Notes
+The current exe is large because it is a full-feature, self-contained Windows app. The biggest contributors are:
 
-`Snippy.spec` includes app assets, Windows version metadata (`file_version_info.txt`),
-and dynamically locates the installed `rapidocr` package so OCR model files are bundled
-with the executable. Publisher is set to `UV`. Keep the spec and version info file in sync
-with dependency and version changes.
+- PySide6 / Qt
+- RapidOCR and ONNX Runtime
+- FastMCP plus HTTP/SSE server dependencies
+- OpenCV, NumPy, Pandas, LXML, and ReportLab style dependencies
+- Windows support DLLs and PyInstaller bootloader files
 
-Generated folders and files such as `.venv`, `build`, `dist`, `__pycache__`, and ad hoc
-test exports should not be committed.
+Lower-risk improvements:
+
+- Keep the current full build as the default release and add a second "lite" build later.
+- Use one-folder PyInstaller builds during testing to improve startup and inspect dependency size.
+- Lazy-load OCR/export modules so startup is faster.
+- Prune optional FastMCP/jsonschema/test/CLI hidden imports only after MCP regression testing.
+- Consider separate variants:
+  - `Snippy.exe`: full desktop + OCR + MCP
+  - `SnippyLite.exe`: desktop capture + ruler + color, no MCP/OCR
+  - `SnippyAgent.exe`: MCP screen tools, no PDF/table export
+
+Do not remove PySide6, FastMCP, RapidOCR, or ONNX Runtime from the current main build unless you intentionally remove the corresponding feature.
+
+---
+
+## Known Operational Notes
+
+- Newly added MCP config usually requires restarting the AI client or opening a new chat/task.
+- If another app uses port `8000`, start Snippy with `--mcp-port <port>` and update the MCP client config.
+- MCP region coordinates are virtual desktop logical coordinates, not necessarily raw physical pixels on mixed-DPI systems.
+- If screen capture returns unexpected geometry, call `snippy_get_monitor_layout` first.

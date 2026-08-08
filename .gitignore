@@ -19,6 +19,7 @@ dist/
 .idea/
 
 # Temporary outputs & logs
+captures/
 *.log
 run.log
 test_output.csv

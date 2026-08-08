@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 import threading
 
@@ -224,6 +225,14 @@ def _build_tray(app: QApplication) -> QSystemTrayIcon:
 
     menu.addSeparator()
 
+    mcp_port = getattr(app, "_mcp_port", 8000)
+    mcp_active = getattr(app, "_mcp_active", True)
+    if mcp_active:
+        mcp_status = QAction(f"⚡ MCP Server: http://127.0.0.1:{mcp_port}/sse", menu)
+        mcp_status.setEnabled(False)
+        menu.addAction(mcp_status)
+        menu.addSeparator()
+
     quit_action = QAction("Quit Snippy", menu)
     quit_action.triggered.connect(app.quit)
     menu.addAction(quit_action)
@@ -264,6 +273,20 @@ def _enable_dpi_awareness() -> None:
 
 
 def main() -> None:
+    import argparse
+    parser = argparse.ArgumentParser(description="Snippy Desktop Application & FastMCP Server")
+    parser.add_argument("--mcp-stdio", action="store_true", help="Run FastMCP server in Stdio mode for CLI connectors")
+    parser.add_argument("--mcp-port", type=int, default=int(os.environ.get("SNIPPY_MCP_PORT", 8000)), help="Port for FastMCP SSE server (default: 8000)")
+    parser.add_argument("--no-mcp", action="store_true", help="Disable embedded FastMCP SSE server")
+    args, _ = parser.parse_known_args()
+
+    import mcp_server
+
+    if args.mcp_stdio:
+        print("[Snippy] Running in FastMCP Stdio mode...")
+        mcp_server.run_mcp_stdio()
+        return
+
     _enable_dpi_awareness()
 
     # Tell Windows to treat this process as a standalone app on the Taskbar
@@ -282,16 +305,23 @@ def main() -> None:
     app.setQuitOnLastWindowClosed(False)
     app.setApplicationName("Snippy")
     app.setWindowIcon(QIcon(config.LOGO_PATH))
+    app._mcp_port = args.mcp_port
+    app._mcp_active = not args.no_mcp
+
+    # Launch FastMCP SSE server in background thread if enabled
+    if not args.no_mcp:
+        app._mcp_active = mcp_server.start_mcp_sse_server(port=args.mcp_port) is not None
 
     # Build main window first so it's ready before tray notification
-    global _main_window
+    global _main_window, _tray
     from main_window import MainWindow
     _main_window = MainWindow(capture_fn=_on_hotkey)
     _main_window.show()
     _main_window.raise_()
     _main_window.activateWindow()
 
-    tray = _build_tray(app)
+    _tray = _build_tray(app)
+
 
     if not QSystemTrayIcon.isSystemTrayAvailable():
         print("[snippy] Warning: system tray not available.")
