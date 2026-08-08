@@ -7,13 +7,21 @@ It can be used in two ways:
 - As a desktop app: capture screenshots with a hotkey, copy OCR text, export tables, pick colors, and measure regions.
 - As an MCP server: let AI agents inspect the current screen, measure UI elements, sample colors, run OCR, and record multi-step workflows.
 
-The packaged release is a standalone executable:
+## Platform Support
+
+| Platform | Status | Release artifact | Notes |
+|---|---|---|---|
+| Windows x64 | Supported | `Snippy-Windows-x64.exe` | Primary tested platform. Desktop app, OCR, capture tools, and MCP SSE/stdio are supported. |
+| macOS x64 | Experimental / beta | `Snippy-macOS-x64.zip` | Built in GitHub Actions. Requires real-device validation and macOS Screen Recording / Accessibility permissions for capture and global hotkeys. |
+| macOS arm64 | Experimental / beta | `Snippy-macOS-arm64.zip` | Built in GitHub Actions for Apple Silicon. Requires the same real-device validation and permissions. |
+
+The current Windows release is a standalone executable:
 
 ```text
 dist\Snippy.exe
 ```
 
-No Python install is required to run the packaged exe.
+No Python install is required to run packaged release artifacts.
 
 ---
 
@@ -33,16 +41,16 @@ No Python install is required to run the packaged exe.
 
 ## Quick Start With The EXE
 
-1. Download or copy the built executable:
+1. Download the Windows release artifact from GitHub Releases:
 
    ```text
-   Snippy.exe
+   Snippy-Windows-x64.exe
    ```
 
 2. Run it:
 
    ```powershell
-   .\Snippy.exe
+   .\Snippy-Windows-x64.exe
    ```
 
 3. Snippy opens the desktop app and starts the MCP SSE server automatically:
@@ -54,6 +62,24 @@ No Python install is required to run the packaged exe.
 4. Use the tray icon or `Ctrl+Shift+S` to capture.
 
 If Windows SmartScreen warns about the executable, choose the normal "More info" flow only if you trust the file source.
+
+### macOS Beta Notes
+
+Download the matching macOS zip from GitHub Releases:
+
+```text
+Snippy-macOS-x64.zip
+Snippy-macOS-arm64.zip
+```
+
+Unzip it and run `Snippy.app`.
+
+macOS screen capture and global hotkeys require permissions:
+
+- System Settings -> Privacy & Security -> Screen Recording
+- System Settings -> Privacy & Security -> Accessibility
+
+Until Snippy is tested and signed/notarized on macOS hardware, macOS builds should be treated as beta.
 
 ---
 
@@ -290,6 +316,8 @@ python main.py --mcp-stdio
 
 ## Build Standalone EXE
 
+### Local Windows Build
+
 ```powershell
 .\.venv\Scripts\python.exe -m pip install pyinstaller
 .\.venv\Scripts\pyinstaller.exe Snippy.spec --noconfirm
@@ -302,6 +330,46 @@ dist\Snippy.exe
 ```
 
 The current full-feature build bundles PySide6, FastMCP, RapidOCR, ONNX Runtime, image processing, table/export libraries, and Windows support DLLs. This makes the exe relatively large, but it keeps the app portable.
+
+### GitHub Actions Release Builds
+
+The repository includes a release workflow:
+
+```text
+.github/workflows/build.yml
+```
+
+It builds and uploads:
+
+```text
+Snippy-Windows-x64.exe
+Snippy-macOS-x64.zip
+Snippy-macOS-arm64.zip
+```
+
+The workflow also smoke-tests packaged MCP stdio by calling:
+
+```text
+snippy_measure_region
+```
+
+This test avoids screen-capture permissions, so it can run in CI on Windows and macOS. Full capture testing still needs a real desktop session.
+
+To publish a release, push a tag like:
+
+```powershell
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+Or run the workflow manually from GitHub Actions and provide a release tag.
+
+### Signing And Notarization
+
+Current CI artifacts are unsigned. Later release hardening should add:
+
+- Windows code signing to reduce SmartScreen warnings.
+- macOS Developer ID signing and notarization so `Snippy.app` opens cleanly on end-user Macs.
 
 ---
 

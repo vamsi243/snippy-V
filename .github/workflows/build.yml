@@ -13,8 +13,16 @@ on:
 
 jobs:
   build-macos:
-    name: Build macOS App Bundle
-    runs-on: macos-latest
+    name: Build macOS App Bundle (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15-intel
+            arch: x64
+          - runner: macos-15
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -30,23 +38,32 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
+      - name: Import-check source modules
+        run: |
+          python -m py_compile main.py mcp_server.py capture_overlay.py action_hub.py config.py main_window.py parser_engine.py screen_glow.py ocr/base.py ocr/rapidocr_backend.py ocr/tables.py ocr/tesseract.py scripts/smoke_mcp_stdio.py
+          python -c "import main, mcp_server; print('imports ok')"
+
       - name: Build macOS .app bundle
         run: |
-          pyinstaller --noconfirm --windowed --name="Snippy" main.py
+          pyinstaller Snippy-macOS.spec --noconfirm
+
+      - name: Smoke-test packaged MCP stdio
+        run: |
+          python scripts/smoke_mcp_stdio.py "$PWD/dist/Snippy.app/Contents/MacOS/Snippy" --mcp-stdio
 
       - name: Create ZIP archive for macOS
         run: |
           cd dist
-          zip -r Snippy-macOS.zip Snippy.app
+          ditto -c -k --sequesterRsrc --keepParent Snippy.app "Snippy-macOS-${{ matrix.arch }}.zip"
 
       - name: Upload macOS Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Snippy-macOS
-          path: dist/Snippy-macOS.zip
+          name: Snippy-macOS-${{ matrix.arch }}
+          path: dist/Snippy-macOS-${{ matrix.arch }}.zip
 
   build-windows:
-    name: Build Windows Executable
+    name: Build Windows Executable (x64)
     runs-on: windows-latest
     steps:
       - name: Checkout repository
@@ -63,15 +80,29 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
-      - name: Build Windows Executable
+      - name: Import-check source modules
+        run: |
+          python -m py_compile main.py mcp_server.py capture_overlay.py action_hub.py config.py main_window.py parser_engine.py screen_glow.py ocr\base.py ocr\rapidocr_backend.py ocr\tables.py ocr\tesseract.py scripts\smoke_mcp_stdio.py
+          python -c "import main, mcp_server; print('imports ok')"
+
+      - name: Build Windows executable
         run: |
           pyinstaller Snippy.spec --noconfirm
+
+      - name: Smoke-test packaged MCP stdio
+        run: |
+          $exe = Join-Path $PWD "dist\Snippy.exe"
+          python scripts\smoke_mcp_stdio.py $exe --mcp-stdio
+
+      - name: Rename Windows release artifact
+        run: |
+          Move-Item -LiteralPath dist\Snippy.exe -Destination dist\Snippy-Windows-x64.exe -Force
 
       - name: Upload Windows Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Snippy-Windows
-          path: dist/Snippy.exe
+          name: Snippy-Windows-x64
+          path: dist/Snippy-Windows-x64.exe
 
   publish-release:
     name: Publish GitHub Release
@@ -81,15 +112,20 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Download macOS Artifact
+      - name: Download macOS x64 Artifact
         uses: actions/download-artifact@v4
         with:
-          name: Snippy-macOS
+          name: Snippy-macOS-x64
 
-      - name: Download Windows Artifact
+      - name: Download macOS arm64 Artifact
         uses: actions/download-artifact@v4
         with:
-          name: Snippy-Windows
+          name: Snippy-macOS-arm64
+
+      - name: Download Windows x64 Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: Snippy-Windows-x64
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -97,8 +133,9 @@ jobs:
           tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
           target_commitish: ${{ github.sha }}
           files: |
-            Snippy-macOS.zip
-            Snippy.exe
+            Snippy-macOS-x64.zip
+            Snippy-macOS-arm64.zip
+            Snippy-Windows-x64.exe
           name: Release ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
           draft: false
           prerelease: false

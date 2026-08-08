@@ -23,6 +23,9 @@ Supporting modules:
 - `ocr/tesseract.py`: optional Tesseract backend.
 - `ocr/tables.py`: geometric table reconstruction.
 - `Snippy.spec`: PyInstaller build definition for the standalone exe.
+- `Snippy-macOS.spec`: PyInstaller build definition for the experimental macOS `.app`.
+- `.github/workflows/build.yml`: GitHub Actions release workflow for Windows and macOS artifacts.
+- `scripts/smoke_mcp_stdio.py`: CI smoke test for packaged MCP stdio.
 
 ---
 
@@ -326,6 +329,8 @@ This feature is useful for QA walkthroughs, bug reproduction, design audits, and
 
 `Snippy.spec` builds a one-file Windows executable.
 
+`Snippy-macOS.spec` builds an experimental macOS app bundle. macOS capture and hotkey behavior still needs real-device validation because GitHub Actions cannot grant Screen Recording and Accessibility permissions in the same way an end-user Mac does.
+
 The spec bundles:
 
 - `assets/`
@@ -361,6 +366,16 @@ Output:
 ```text
 dist\Snippy.exe
 ```
+
+GitHub Actions release artifacts:
+
+```text
+Snippy-Windows-x64.exe
+Snippy-macOS-x64.zip
+Snippy-macOS-arm64.zip
+```
+
+The release workflow smoke-tests packaged MCP stdio by calling `snippy_measure_region`. This verifies the packaged MCP server starts and responds without requiring CI screen-capture permissions.
 
 Recommended validation:
 
@@ -400,7 +415,10 @@ Before publishing a new exe:
 9. Test stdio MCP from the exe.
 10. Confirm `captures\snippy_mcp.log` is empty or contains only expected startup entries.
 11. Build with `Snippy.spec`.
-12. Test `dist\Snippy.exe` on a clean Windows machine.
+12. Build macOS with `Snippy-macOS.spec` if publishing beta macOS artifacts.
+13. Test `dist\Snippy.exe` on a clean Windows machine.
+14. Test `Snippy.app` on a real Mac with Screen Recording and Accessibility permissions.
+15. Add Windows code signing and macOS signing/notarization before treating artifacts as polished public releases.
 
 ---
 
