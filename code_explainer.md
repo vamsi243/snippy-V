@@ -149,9 +149,10 @@ python -c "import main, main_window, capture_overlay, action_hub, parser_engine;
 
 ## Packaging Notes
 
-`Snippy.spec` includes app assets and dynamically locates the installed `rapidocr` package
-so OCR model files are bundled with the executable. Keep the spec in sync with dependency
-changes.
+`Snippy.spec` includes app assets, Windows version metadata (`file_version_info.txt`),
+and dynamically locates the installed `rapidocr` package so OCR model files are bundled
+with the executable. Publisher is set to `UV`. Keep the spec and version info file in sync
+with dependency and version changes.
 
 Generated folders and files such as `.venv`, `build`, `dist`, `__pycache__`, and ad hoc
 test exports should not be committed.

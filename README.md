@@ -94,6 +94,7 @@ Snippy/
 |-- screen_glow.py         # Short capture feedback animation
 |-- parser_engine.py       # OCR orchestration, CSV/PDF export, web search
 |-- config.py              # Theme, constants, backend factory, browser helpers
+|-- file_version_info.txt  # Windows executable version and publisher metadata
 |-- Snippy.spec            # PyInstaller build configuration
 |-- ocr/
 |   |-- base.py            # Shared OCR dataclasses and protocol
