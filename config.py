@@ -19,7 +19,7 @@ HOTKEY_COMBINATION = "<ctrl>+<shift>+s"
 HOTKEY_DISPLAY = "Ctrl+Shift+S"
 
 # ---------------------------------------------------------------------------
-# Theme — based on Snippy logo: near-black on warm off-white
+# Theme based on Snippy logo: near-black on warm off-white
 # ---------------------------------------------------------------------------
 BG = "#EDEAE4"          # warm off-white (logo background colour)
 SURFACE = "#FFFFFF"      # white panels / cards
@@ -141,7 +141,7 @@ def open_brave(url: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Backend factory — singleton so the ONNX engine loads only once
+# Backend factory: singleton so the ONNX engine loads only once
 # ---------------------------------------------------------------------------
 
 _backend_instance = None

@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-from PySide6.QtCore import Qt, QTimer, QSize
-from PySide6.QtGui import QIcon, QPixmap, QFont, QColor, QPainter, QPainterPath
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QLabel, QFrame, QApplication,
+    QPushButton, QLabel, QFrame,
 )
 
 import config
@@ -26,7 +25,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Snippy")
         logo = config.LOGO_PATH
         self.setWindowIcon(QIcon(logo))
-        self.setFixedSize(400, 420)
+        self.setFixedSize(620, 420)
 
         self.setStyleSheet(f"""
             QMainWindow, QWidget#central_widget {{
@@ -46,39 +45,21 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # ── Top accent bar ─────────────────────────────────────────
+        # Top accent bar
         top_bar = QWidget()
         top_bar.setFixedHeight(6)
         top_bar.setStyleSheet(f"background: {config.ACCENT};")
         layout.addWidget(top_bar)
 
-        # ── Main content area ──────────────────────────────────────
+        layout.addWidget(self._build_command_bar())
+
+        # Main content area
         content = QWidget()
         content.setStyleSheet(f"background: {config.BG};")
         content_layout = QVBoxLayout(content)
-        content_layout.setContentsMargins(40, 36, 40, 36)
+        content_layout.setContentsMargins(56, 62, 56, 30)
         content_layout.setSpacing(0)
         content_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
-
-        # Logo image
-        logo_lbl = QLabel()
-        logo_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        pix = QPixmap(config.LOGO_PATH)
-        if not pix.isNull():
-            scaled = pix.scaled(
-                200, 110,
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
-            logo_lbl.setPixmap(scaled)
-        else:
-            logo_lbl.setText("SNIPPY")
-            logo_lbl.setStyleSheet(
-                f"font-size: 28px; font-weight: 700; color: {config.ACCENT}; letter-spacing: 6px;"
-            )
-        content_layout.addWidget(logo_lbl)
-
-        content_layout.addSpacing(28)
 
         # Divider
         div = QFrame()
@@ -137,7 +118,7 @@ class MainWindow(QMainWindow):
 
         content_layout.addStretch()
 
-        # ── Footer ─────────────────────────────────────────────────
+        # Footer
         footer = QWidget()
         footer.setFixedHeight(46)
         footer.setStyleSheet(f"background: {config.SURFACE}; border-top: 1px solid {config.BORDER};")
@@ -156,11 +137,76 @@ class MainWindow(QMainWindow):
         layout.addWidget(content)
         layout.addWidget(footer)
 
+    def _build_command_bar(self) -> QWidget:
+        bar = QWidget()
+        bar.setFixedHeight(52)
+        bar.setStyleSheet(f"""
+            QWidget {{
+                background: {config.SURFACE};
+                border-bottom: 1px solid {config.BORDER};
+            }}
+        """)
+
+        layout = QHBoxLayout(bar)
+        layout.setContentsMargins(12, 6, 12, 6)
+        layout.setSpacing(8)
+
+        self._new_btn = self._make_command_btn("+  New", wide=True)
+        self._snip_btn = self._make_command_btn("Snip")
+        self._ruler_btn = self._make_command_btn("Ruler")
+        self._color_btn = self._make_command_btn("Color")
+
+        self._new_btn.setToolTip("Start a new snip")
+        self._snip_btn.setToolTip("Capture a screen region")
+        self._ruler_btn.setToolTip("Measure pixels with the ruler")
+        self._color_btn.setToolTip("Pick a pixel color")
+
+        self._new_btn.clicked.connect(lambda: self._start_capture("snip"))
+        self._snip_btn.clicked.connect(lambda: self._start_capture("snip"))
+        self._ruler_btn.clicked.connect(lambda: self._start_capture("ruler"))
+        self._color_btn.clicked.connect(lambda: self._start_capture("color"))
+
+        layout.addWidget(self._new_btn)
+        layout.addSpacing(4)
+        layout.addWidget(self._snip_btn)
+        layout.addWidget(self._ruler_btn)
+        layout.addWidget(self._color_btn)
+        layout.addStretch()
+
+        return bar
+
+    def _make_command_btn(self, label: str, wide: bool = False) -> QPushButton:
+        btn = QPushButton(label)
+        btn.setFixedSize(94 if wide else 76, 38)
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn.setStyleSheet(f"""
+            QPushButton {{
+                background: #FAFAFA;
+                color: {config.TEXT};
+                border: 1px solid {config.BORDER};
+                border-radius: 6px;
+                font-size: 13px;
+                font-weight: 500;
+                padding: 0px 10px;
+            }}
+            QPushButton:hover {{
+                background: #F1F1F1;
+                border-color: {config.ACCENT};
+            }}
+            QPushButton:pressed {{
+                background: #E8E8E8;
+            }}
+        """)
+        return btn
+
     # ------------------------------------------------------------------
     def _on_capture_clicked(self) -> None:
+        self._start_capture("snip")
+
+    def _start_capture(self, mode: str) -> None:
         self.hide()
         # Small delay so the window is fully gone before the capture overlay appears
-        QTimer.singleShot(150, self._capture_fn)
+        QTimer.singleShot(150, lambda: self._capture_fn(mode))
 
     def set_status(self, msg: str, ok: bool = True) -> None:
         color = config.SUCCESS if ok else config.ERROR

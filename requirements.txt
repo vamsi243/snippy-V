@@ -8,5 +8,5 @@ onnxruntime>=1.17
 pandas>=2.0
 lxml>=5.0
 reportlab>=4.0
-# Optional — Tier-2 table extraction (only if geometric reconstruction is insufficient):
+# Optional: Tier-2 table extraction (only if geometric reconstruction is insufficient):
 # rapid_table>=2.0

@@ -1,4 +1,4 @@
-"""Floating Action Hub — spawns beside the drawn selection with preview + 5 action buttons."""
+"""Floating Action Hub: preview, OCR status, and capture actions."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import time
 
 from PIL import Image
 from PySide6.QtCore import Qt, QRect, QTimer
-from PySide6.QtGui import QPixmap, QImage, QColor, QPainter, QPen, QIcon
+from PySide6.QtGui import QPixmap, QImage
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
     QFrame, QFileDialog, QApplication,
@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
 import config
 from ocr.base import ParseResult
 
-HUB_WIDTH = 310
+HUB_WIDTH = 340
 
 
 def pil_to_qpixmap(img: Image.Image) -> QPixmap:
@@ -28,15 +28,6 @@ def pil_to_qpixmap(img: Image.Image) -> QPixmap:
     return QPixmap.fromImage(qimg.copy())
 
 
-_BUTTON_DEFS = [
-    ("📋  Copy Image",       "copy_image",       "Copy the screen crop to clipboard"),
-    ("📝  Copy Text",        "copy_text",        "Copy recognised text to clipboard"),
-    ("📊  Export CSV",       "export_csv",       "Save tabular data as CSV"),
-    ("📄  Export PDF",       "export_pdf",       "Save text + table as PDF"),
-    ("🔍  Circle to Search", "circle_to_search", "Search selected text in Brave"),
-]
-
-
 class ActionHub(QWidget):
     """Floating hub: preview thumbnail + 5 action buttons."""
 
@@ -45,6 +36,7 @@ class ActionHub(QWidget):
         crop: Image.Image,
         result: ParseResult,
         selection_rect: QRect,
+        on_new_instance: callable | None = None,
         parent=None,
     ) -> None:
         # Use Window (not Tool) so the hub reliably receives mouse/keyboard events
@@ -60,6 +52,7 @@ class ActionHub(QWidget):
         self._crop = crop
         self._result = result
         self._selection_rect = selection_rect
+        self._on_new_instance = on_new_instance
         self._build_ui()
 
         self._auto_close = QTimer(self)
@@ -81,22 +74,38 @@ class ActionHub(QWidget):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        # ── Header bar ────────────────────────────────────────────────
+        # Header bar
         header = QWidget()
-        header.setFixedHeight(36)
+        header.setFixedHeight(40)
         header.setStyleSheet(f"background: {config.ACCENT}; border-radius: 0px;")
         header_layout = QHBoxLayout(header)
         header_layout.setContentsMargins(12, 0, 8, 0)
+        header_layout.setSpacing(6)
 
         title = QLabel("Snippy")
         title.setStyleSheet("color: #FFFFFF; font-size: 12px; font-weight: 600; background: transparent;")
         header_layout.addWidget(title)
         header_layout.addStretch()
 
-        close_btn = QPushButton("✕")
-        close_btn.setFixedSize(24, 24)
-        close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        close_btn.setStyleSheet("""
+        self._new_btn = self._make_header_btn("+")
+        self._new_btn.setToolTip("New Snip")
+        self._new_btn.clicked.connect(lambda: self._start_capture_mode("snip"))
+        header_layout.addWidget(self._new_btn)
+
+        self._ruler_btn = self._make_header_btn("Scale", width=54)
+        self._ruler_btn.setToolTip("Pixel ruler")
+        self._ruler_btn.clicked.connect(lambda: self._start_capture_mode("ruler"))
+        header_layout.addWidget(self._ruler_btn)
+
+        self._color_btn = self._make_header_btn("Color", width=54)
+        self._color_btn.setToolTip("Color picker")
+        self._color_btn.clicked.connect(lambda: self._start_capture_mode("color"))
+        header_layout.addWidget(self._color_btn)
+
+        self._close_btn = QPushButton("X")
+        self._close_btn.setFixedSize(24, 24)
+        self._close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._close_btn.setStyleSheet("""
             QPushButton {
                 background: transparent;
                 color: rgba(255,255,255,180);
@@ -106,11 +115,11 @@ class ActionHub(QWidget):
             }
             QPushButton:hover { color: #FFFFFF; }
         """)
-        close_btn.clicked.connect(self.close)
-        header_layout.addWidget(close_btn)
+        self._close_btn.clicked.connect(self.close)
+        header_layout.addWidget(self._close_btn)
         root.addWidget(header)
 
-        # ── Body ──────────────────────────────────────────────────────
+        # Body
         body = QWidget()
         body.setStyleSheet(f"background: {config.SURFACE};")
         body_layout = QVBoxLayout(body)
@@ -138,12 +147,12 @@ class ActionHub(QWidget):
 
         body_layout.addSpacing(4)
 
-        # Action buttons — store direct references to avoid collection errors
-        self._btn_copy_image = self._make_btn("📋  Copy Image", "Copy the screen crop to clipboard")
-        self._btn_copy_text = self._make_btn("📝  Copy Text", "Copy recognised text to clipboard")
-        self._btn_export_csv = self._make_btn("📊  Export CSV", "Save tabular data as CSV")
-        self._btn_export_pdf = self._make_btn("📄  Export PDF", "Save text + table as PDF")
-        self._btn_search = self._make_btn("🔍  Search Text", "Search selected text in browser")
+        # Store direct references to avoid Qt object lifetime surprises.
+        self._btn_copy_image = self._make_btn("Copy Image", "Copy the screen crop to clipboard")
+        self._btn_copy_text = self._make_btn("Copy Text", "Copy recognised text to clipboard")
+        self._btn_export_csv = self._make_btn("Export CSV", "Save tabular data as CSV")
+        self._btn_export_pdf = self._make_btn("Export PDF", "Save text + table as PDF")
+        self._btn_search = self._make_btn("Search Text", "Search selected text in browser")
 
         for btn in (
             self._btn_copy_image,
@@ -173,7 +182,7 @@ class ActionHub(QWidget):
         self._btn_export_pdf.clicked.connect(self._export_pdf)
         self._btn_search.clicked.connect(self._circle_to_search)
 
-        # Start in loading state — text buttons disabled until OCR delivers a result
+        # Start in loading state until OCR delivers a result.
         self.set_ocr_loading(True)
 
     def _make_btn(self, label: str, tooltip: str) -> QPushButton:
@@ -199,6 +208,25 @@ class ActionHub(QWidget):
                 background: {config.ACCENT_HOVER};
                 color: #FFFFFF;
             }}
+        """)
+        return btn
+
+    def _make_header_btn(self, label: str, width: int = 34) -> QPushButton:
+        btn = QPushButton(label)
+        btn.setFixedSize(width, 24)
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn.setStyleSheet("""
+            QPushButton {
+                background: rgba(255,255,255,28);
+                color: #FFFFFF;
+                border: 1px solid rgba(255,255,255,70);
+                border-radius: 4px;
+                font-size: 12px;
+                font-weight: 600;
+                padding: 0px;
+            }
+            QPushButton:hover { background: rgba(255,255,255,48); }
+            QPushButton:pressed { background: rgba(255,255,255,72); }
         """)
         return btn
 
@@ -304,7 +332,7 @@ class ActionHub(QWidget):
 
     def _refresh_ocr_status(self) -> None:
         elapsed = getattr(self, "_ocr_elapsed", 0)
-        self._status.setText(f"Recognising text… {elapsed}s")
+        self._status.setText(f"Recognising text... {elapsed}s")
         self._status.setStyleSheet(
             f"color: {config.MUTED}; font-size: 11px; padding: 2px 6px; background: transparent;"
         )
@@ -323,19 +351,19 @@ class ActionHub(QWidget):
     # ------------------------------------------------------------------
     def _copy_image(self) -> None:
         QApplication.clipboard().setPixmap(pil_to_qpixmap(self._crop))
-        self._set_status("✓ Image copied to clipboard")
+        self._set_status("Image copied to clipboard")
 
     def _copy_text(self) -> None:
         text = self._result.raw_text
         if not text.strip():
-            self._set_status("⏳ Text recognising — try again shortly", ok=False)
+            self._set_status("Text recognising - try again shortly", ok=False)
             return
         QApplication.clipboard().setText(text)
-        self._set_status("✓ Text copied to clipboard")
+        self._set_status("Text copied to clipboard")
 
     def _export_csv(self) -> None:
         if not self._result.table:
-            self._set_status("✗ No table detected in this crop", ok=False)
+            self._set_status("No table detected in this crop", ok=False)
             return
         path, _ = QFileDialog.getSaveFileName(
             self, "Export CSV", "snippy_table.csv", "CSV Files (*.csv)"
@@ -343,7 +371,7 @@ class ActionHub(QWidget):
         if path:
             import parser_engine
             parser_engine.export_csv(self._result.table, path)
-            self._set_status("✓ CSV saved")
+            self._set_status("CSV saved")
 
     def _export_pdf(self) -> None:
         path, _ = QFileDialog.getSaveFileName(
@@ -352,16 +380,16 @@ class ActionHub(QWidget):
         if path:
             import parser_engine
             parser_engine.export_pdf(self._result, path)
-            self._set_status("✓ PDF saved")
+            self._set_status("PDF saved")
 
     def _circle_to_search(self) -> None:
         text = self._result.raw_text.strip()
         if not text:
-            self._set_status("⏳ Text recognising — try again shortly", ok=False)
+            self._set_status("Text recognising - try again shortly", ok=False)
             return
         import parser_engine
         parser_engine.search_brave(text)
-        self._set_status("✓ Opening search…")
+        self._set_status("Opening search...")
         QTimer.singleShot(1500, self.close)
 
     # ------------------------------------------------------------------
@@ -371,11 +399,9 @@ class ActionHub(QWidget):
 
     def mousePressEvent(self, event) -> None:
         self._reset_timer()
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._drag_pos = event.globalPosition().toPoint()
         super().mousePressEvent(event)
-
-    # Allow dragging the hub by its header
-    def _start_drag(self, pos) -> None:
-        self._drag_pos = pos
 
     def mouseMoveEvent(self, event) -> None:
         if hasattr(self, "_drag_pos") and self._drag_pos is not None:
@@ -388,13 +414,19 @@ class ActionHub(QWidget):
         self._drag_pos = None
         super().mouseReleaseEvent(event)
 
+    def _start_capture_mode(self, mode: str) -> None:
+        if self._on_new_instance:
+            self.close()
+            QTimer.singleShot(0, lambda: self._on_new_instance(mode))
+
 
 def show_hub(
     crop: Image.Image,
     result: ParseResult,
     selection_rect: QRect,
+    on_new_instance: callable | None = None,
 ) -> ActionHub:
-    hub = ActionHub(crop, result, selection_rect)
+    hub = ActionHub(crop, result, selection_rect, on_new_instance=on_new_instance)
     hub.setFixedWidth(HUB_WIDTH)
     hub.show()
     hub._position_near()

@@ -13,12 +13,12 @@ import config
 
 
 # ---------------------------------------------------------------------------
-# Thread-safe bridges: background threads → Qt main thread
+# Thread-safe bridges: background threads to Qt main thread
 # ---------------------------------------------------------------------------
 
 class _Bridge(QObject):
     trigger = Signal()
-    ocr_done = Signal(object)   # carries ParseResult (or None)
+    ocr_done = Signal(object)   # carries (ParseResult, target_hub)
 
 
 _bridge = _Bridge()
@@ -48,20 +48,33 @@ def _start_hotkey_listener() -> None:
 # ---------------------------------------------------------------------------
 
 _active_overlay = None
-_active_hub = None
+_active_hubs = set()
 _main_window = None
+_pending_capture_mode = "snip"
 
 
-def _on_hotkey() -> None:
+def _on_hotkey(mode: str = "snip") -> None:
+    _request_capture(mode)
+
+
+def _request_capture(mode: str = "snip") -> None:
     global _active_overlay, _active_glow
     if _active_overlay is not None:
         return
 
+    global _pending_capture_mode
+    _pending_capture_mode = mode
+    _close_active_hubs()
+
+    app = QApplication.instance()
+    if app is not None:
+        app.processEvents()
+
     from screen_glow import ScreenGlowOverlay
-    _active_glow = ScreenGlowOverlay(accent=config.ACCENT, duration_ms=600, fire_at=1.0)
+    _active_glow = ScreenGlowOverlay(accent=config.ACCENT, duration_ms=180, fire_at=1.0)
     _active_glow.play()
 
-    QTimer.singleShot(80, _launch_capture)
+    QTimer.singleShot(240, _launch_capture)
 
 
 def _launch_capture() -> None:
@@ -69,7 +82,11 @@ def _launch_capture() -> None:
     if _active_overlay is not None:
         return
     from capture_overlay import start_capture
-    _active_overlay = start_capture(on_crop=_on_crop, on_cancel=_on_cancel)
+    _active_overlay = start_capture(
+        on_crop=_on_crop,
+        on_cancel=_on_cancel,
+        initial_mode=_pending_capture_mode,
+    )
 
 
 def _on_cancel() -> None:
@@ -85,7 +102,7 @@ def _on_crop(crop, selection_rect) -> None:
     _active_overlay = None
 
     # Show hub immediately; OCR result will be injected once it finishes
-    _show_hub(crop, None, selection_rect)
+    target_hub = _show_hub(crop, None, selection_rect)
 
     def _parse_in_bg():
         import traceback
@@ -96,40 +113,63 @@ def _on_crop(crop, selection_rect) -> None:
             traceback.print_exc()
             result = None
         # Signal crosses the thread boundary safely; _update_hub runs on main thread
-        _bridge.ocr_done.emit(result)
+        _bridge.ocr_done.emit((result, target_hub))
 
     threading.Thread(target=_parse_in_bg, daemon=True).start()
 
 
-def _show_hub(crop, result, selection_rect) -> None:
-    global _active_hub
+def _close_active_hubs() -> None:
+    for hub in list(_active_hubs):
+        try:
+            hub.close()
+        except RuntimeError:
+            pass
+    _active_hubs.clear()
+
+
+def _show_hub(crop, result, selection_rect):
+    global _active_hubs
     from ocr.base import ParseResult
     from action_hub import show_hub
 
     if result is None:
         result = ParseResult(raw_text="")
 
-    _active_hub = show_hub(crop, result, selection_rect)
+    hub = show_hub(crop, result, selection_rect, on_new_instance=_on_hotkey)
+    _active_hubs.add(hub)
+
+    orig_close = hub.closeEvent
+    def _close_event(evt):
+        _active_hubs.discard(hub)
+        if orig_close:
+            orig_close(evt)
+    hub.closeEvent = _close_event
+
+    return hub
 
 
-def _update_hub(result) -> None:
-    global _active_hub
-    if _active_hub is None or not _active_hub.isVisible():
+def _update_hub(data) -> None:
+    if isinstance(data, tuple) and len(data) == 2:
+        result, hub = data
+    else:
+        result, hub = data, None
+
+    if hub is None or not hub.isVisible():
         return
     from ocr.base import ParseResult
     if result is None:
         result = ParseResult(raw_text="[OCR failed]")
-    _active_hub._result = result
-    _active_hub.set_ocr_loading(False)   # stops the timer, sets ocr_elapsed_s
-    elapsed = getattr(_active_hub, "ocr_elapsed_s", 0)
+    hub._result = result
+    hub.set_ocr_loading(False)   # stops the timer, sets ocr_elapsed_s
+    elapsed = getattr(hub, "ocr_elapsed_s", 0)
     elapsed_str = f"{elapsed:.1f}s"
     if result.raw_text and result.raw_text not in ("", "[OCR failed]"):
         lines = len([ln for ln in result.raw_text.splitlines() if ln.strip()])
-        _active_hub._set_status(
+        hub._set_status(
             f"Recognised {lines} line{'s' if lines != 1 else ''} in {elapsed_str}"
         )
     else:
-        _active_hub._set_status(f"No text found · {elapsed_str}", ok=False)
+        hub._set_status(f"No text found - {elapsed_str}", ok=False)
 
 
 # ---------------------------------------------------------------------------
@@ -171,8 +211,16 @@ def _build_tray(app: QApplication) -> QSystemTrayIcon:
     menu.addAction(show_action)
 
     capture_action = QAction(f"Capture  ({config.HOTKEY_DISPLAY})", menu)
-    capture_action.triggered.connect(lambda: QTimer.singleShot(0, _on_hotkey))
+    capture_action.triggered.connect(lambda: QTimer.singleShot(0, lambda: _on_hotkey("snip")))
     menu.addAction(capture_action)
+
+    ruler_action = QAction("Pixel Ruler", menu)
+    ruler_action.triggered.connect(lambda: QTimer.singleShot(0, lambda: _on_hotkey("ruler")))
+    menu.addAction(ruler_action)
+
+    color_action = QAction("Color Picker", menu)
+    color_action.triggered.connect(lambda: QTimer.singleShot(0, lambda: _on_hotkey("color")))
+    menu.addAction(color_action)
 
     menu.addSeparator()
 
@@ -202,7 +250,22 @@ def _tray_activated(reason: QSystemTrayIcon.ActivationReason) -> None:
 # Main
 # ---------------------------------------------------------------------------
 
+def _enable_dpi_awareness() -> None:
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        try:
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)
+        except Exception:
+            ctypes.windll.user32.SetProcessDPIAware()
+    except Exception:
+        pass
+
+
 def main() -> None:
+    _enable_dpi_awareness()
+
     # Tell Windows to treat this process as a standalone app on the Taskbar
     if sys.platform == "win32":
         try:
@@ -225,6 +288,8 @@ def main() -> None:
     from main_window import MainWindow
     _main_window = MainWindow(capture_fn=_on_hotkey)
     _main_window.show()
+    _main_window.raise_()
+    _main_window.activateWindow()
 
     tray = _build_tray(app)
 

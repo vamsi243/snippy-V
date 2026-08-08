@@ -1,4 +1,4 @@
-"""Orchestrates OCR → table reconstruction → exports → clipboard → Brave search."""
+"""Orchestrates OCR, table reconstruction, exports, clipboard, and search."""
 
 from __future__ import annotations
 
@@ -61,7 +61,7 @@ def parse_image(pil_image: "Image.Image") -> ParseResult:
 
 
 def _is_degenerate(table: list[list[str]]) -> bool:
-    """True if the geometric table has ≤1 column or very low cell fill."""
+    """True if the geometric table has <=1 column or very low cell fill."""
     if not table:
         return True
     n_cols = max(len(row) for row in table) if table else 0
@@ -104,7 +104,7 @@ def export_pdf(result: ParseResult, path: str | Path) -> None:
     # Title
     title_style = ParagraphStyle("title", parent=styles["Heading1"],
                                   fontSize=14, spaceAfter=10)
-    story.append(Paragraph("Snippy — Captured Text", title_style))
+    story.append(Paragraph("Snippy - Captured Text", title_style))
     story.append(Spacer(1, 0.3 * cm))
 
     # Raw text block

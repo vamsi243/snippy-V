@@ -50,8 +50,8 @@ class ScreenGlowOverlay(QWidget):
         self._fire_at = fire_at  # fraction of duration at which callback fires
         self._on_finished = None
 
-        self._progress: float = 0.0  # 0 → 1 drives the animation
-        self._sweep: float = 0.0    # 0 → 1 position of highlight sweep
+        self._progress: float = 0.0  # 0 to 1 drives the animation
+        self._sweep: float = 0.0    # 0 to 1 position of highlight sweep
 
         # Cover all screens
         app = QApplication.instance()
@@ -99,9 +99,9 @@ class ScreenGlowOverlay(QWidget):
 
         w = self.width()
         h = self.height()
-        t = self._progress  # 0→1
+        t = self._progress  # 0 to 1
 
-        # Fade envelope: bloom in (0→0.3), hold (0.3→0.7), fade out (0.7→1)
+        # Fade envelope: bloom in, hold, then fade out.
         if t < 0.3:
             alpha = t / 0.3
         elif t < 0.7:
